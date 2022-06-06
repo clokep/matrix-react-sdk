@@ -891,17 +891,18 @@ class TimelinePanel extends React.Component<IProps, IState> {
         // if no client or client is guest don't send RR or RM
         if (!cli || cli.isGuest()) return;
 
-        this.state.events.forEach((ev, ind) => {
-            // Do not send for events which are not being viewed.
-            if (ind < this.state.firstVisibleEventIndex) {
-                return;
-            }
+        const eventIdToEvent = new Map(this.state.events.map(ev => [ev.getId(), ev]));
 
+        // Do not send for events which are not being viewed.
+        const visibleEventIds = [
+            ...document.getElementsByClassName("mx_EventTile")].filter(el => el.getBoundingClientRect().top > 0).map(el => el.dataset.eventId);
+        visibleEventIds.forEach((eventId) => {
             // Do not send if this event is already read.
-            const eventId = ev.getId();
             if (this.sentRRs.indexOf(eventId) != -1) {
                 return;
             }
+
+            const ev = eventIdToEvent.get(eventId);
 
             MatrixClientPeg.get().sendReadReceipt(
                 ev,
