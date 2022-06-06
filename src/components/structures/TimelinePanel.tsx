@@ -229,8 +229,7 @@ class TimelinePanel extends React.Component<IProps, IState> {
         disableGrouping: false,
     };
 
-    private lastRRSentEventId: string = undefined;
-    private lastRMSentEventId: string = undefined;
+    private sentRRs: string[] = [];
 
     private readonly messagePanel = createRef<MessagePanel>();
     private readonly dispatcherRef: string;
@@ -892,102 +891,27 @@ class TimelinePanel extends React.Component<IProps, IState> {
         // if no client or client is guest don't send RR or RM
         if (!cli || cli.isGuest()) return;
 
-        let shouldSendRR = true;
-
-        const currentRREventId = this.getCurrentReadReceipt(true);
-        const currentRREventIndex = this.indexForEventId(currentRREventId);
-        // We want to avoid sending out read receipts when we are looking at
-        // events in the past which are before the latest RR.
-        //
-        // For now, let's apply a heuristic: if (a) the event corresponding to
-        // the latest RR (either from the server, or sent by ourselves) doesn't
-        // appear in our timeline, and (b) we could forward-paginate the event
-        // timeline, then don't send any more RRs.
-        //
-        // This isn't watertight, as we could be looking at a section of
-        // timeline which is *after* the latest RR (so we should actually send
-        // RRs) - but that is a bit of a niche case. It will sort itself out when
-        // the user eventually hits the live timeline.
-        //
-        if (currentRREventId && currentRREventIndex === null &&
-                this.timelineWindow.canPaginate(EventTimeline.FORWARDS)) {
-            shouldSendRR = false;
-        }
-
-        const lastReadEventIndex = this.getLastDisplayedEventIndex({
-            ignoreOwn: true,
-        });
-        if (lastReadEventIndex === null) {
-            shouldSendRR = false;
-        }
-        let lastReadEvent = this.state.events[lastReadEventIndex];
-        shouldSendRR = shouldSendRR &&
-            // Only send a RR if the last read event is ahead in the timeline relative to
-            // the current RR event.
-            lastReadEventIndex > currentRREventIndex &&
-            // Only send a RR if the last RR set != the one we would send
-            this.lastRRSentEventId != lastReadEvent.getId();
-
-        // Only send a RM if the last RM sent != the one we would send
-        const shouldSendRM =
-            this.lastRMSentEventId != this.state.readMarkerEventId;
-
-        // we also remember the last read receipt we sent to avoid spamming the
-        // same one at the server repeatedly
-        if (shouldSendRR || shouldSendRM) {
-            if (shouldSendRR) {
-                this.lastRRSentEventId = lastReadEvent.getId();
-            } else {
-                lastReadEvent = null;
+        this.state.events.forEach((ev, ind) => {
+            // Do not send for events which are not being viewed.
+            if (ind < this.state.firstVisibleEventIndex) {
+                return;
             }
-            this.lastRMSentEventId = this.state.readMarkerEventId;
 
-            const roomId = this.props.timelineSet.room.roomId;
-            const hiddenRR = SettingsStore.getValue("feature_hidden_read_receipts", roomId);
+            // Do not send if this event is already read.
+            const eventId = ev.getId();
+            if (this.sentRRs.indexOf(eventId) != -1) {
+                return;
+            }
 
-            debuglog('Sending Read Markers for ',
-                this.props.timelineSet.room.roomId,
-                'rm', this.state.readMarkerEventId,
-                lastReadEvent ? 'rr ' + lastReadEvent.getId() : '',
-                ' hidden:' + hiddenRR,
-            );
-            MatrixClientPeg.get().setRoomReadMarkers(
-                roomId,
-                this.state.readMarkerEventId,
-                hiddenRR ? null : lastReadEvent, // Could be null, in which case no RR is sent
-                lastReadEvent, // Could be null, in which case no private RR is sent
+            MatrixClientPeg.get().sendReadReceipt(
+                ev,
+                ReceiptType.Read,
             ).catch((e) => {
-                // /read_markers API is not implemented on this HS, fallback to just RR
-                if (e.errcode === 'M_UNRECOGNIZED' && lastReadEvent) {
-                    return MatrixClientPeg.get().sendReadReceipt(
-                        lastReadEvent,
-                        hiddenRR ? ReceiptType.ReadPrivate : ReceiptType.Read,
-                    ).catch((e) => {
-                        logger.error(e);
-                        this.lastRRSentEventId = undefined;
-                    });
-                } else {
-                    logger.error(e);
-                }
-                // it failed, so allow retries next time the user is active
-                this.lastRRSentEventId = undefined;
-                this.lastRMSentEventId = undefined;
+                logger.error(e);
+                return;
             });
-
-            // do a quick-reset of our unreadNotificationCount to avoid having
-            // to wait from the remote echo from the homeserver.
-            // we only do this if we're right at the end, because we're just assuming
-            // that sending an RR for the latest message will set our notif counter
-            // to zero: it may not do this if we send an RR for somewhere before the end.
-            if (this.isAtEndOfLiveTimeline()) {
-                this.props.timelineSet.room.setUnreadNotificationCount(NotificationCountType.Total, 0);
-                this.props.timelineSet.room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
-                dis.dispatch({
-                    action: 'on_room_read',
-                    roomId: this.props.timelineSet.room.roomId,
-                });
-            }
-        }
+            this.sentRRs.push(eventId);
+        });
     };
 
     // if the read marker is on the screen, we can now assume we've caught up to the end
