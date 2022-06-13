@@ -14,46 +14,46 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import React, { createRef, KeyboardEvent } from 'react';
-import { Thread, THREAD_RELATION_TYPE, ThreadEvent } from 'matrix-js-sdk/src/models/thread';
-import { Room } from 'matrix-js-sdk/src/models/room';
-import { IEventRelation, MatrixEvent } from 'matrix-js-sdk/src/models/event';
-import { TimelineWindow } from 'matrix-js-sdk/src/timeline-window';
-import { Direction } from 'matrix-js-sdk/src/models/event-timeline';
-import { IRelationsRequestOpts } from 'matrix-js-sdk/src/@types/requests';
+import React, {createRef, KeyboardEvent} from 'react';
+import {Thread, THREAD_RELATION_TYPE, ThreadEvent} from 'matrix-js-sdk/src/models/thread';
+import {NotificationCountType, Room} from 'matrix-js-sdk/src/models/room';
+import {IEventRelation, MatrixEvent} from 'matrix-js-sdk/src/models/event';
+import {TimelineWindow} from 'matrix-js-sdk/src/timeline-window';
+import {Direction} from 'matrix-js-sdk/src/models/event-timeline';
+import {IRelationsRequestOpts} from 'matrix-js-sdk/src/@types/requests';
 import classNames from "classnames";
-import { logger } from 'matrix-js-sdk/src/logger';
+import {logger} from 'matrix-js-sdk/src/logger';
 
 import BaseCard from "../views/right_panel/BaseCard";
-import { RightPanelPhases } from "../../stores/right-panel/RightPanelStorePhases";
+import {RightPanelPhases} from "../../stores/right-panel/RightPanelStorePhases";
 import ResizeNotifier from '../../utils/ResizeNotifier';
 import MessageComposer from '../views/rooms/MessageComposer';
-import { RoomPermalinkCreator } from '../../utils/permalinks/Permalinks';
-import { Layout } from '../../settings/enums/Layout';
+import {RoomPermalinkCreator} from '../../utils/permalinks/Permalinks';
+import {Layout} from '../../settings/enums/Layout';
 import TimelinePanel from './TimelinePanel';
 import dis from "../../dispatcher/dispatcher";
-import { ActionPayload } from '../../dispatcher/payloads';
-import { Action } from '../../dispatcher/actions';
-import { MatrixClientPeg } from '../../MatrixClientPeg';
-import { E2EStatus } from '../../utils/ShieldUtils';
+import {ActionPayload} from '../../dispatcher/payloads';
+import {Action} from '../../dispatcher/actions';
+import {MatrixClientPeg} from '../../MatrixClientPeg';
+import {E2EStatus} from '../../utils/ShieldUtils';
 import EditorStateTransfer from '../../utils/EditorStateTransfer';
-import RoomContext, { TimelineRenderingType } from '../../contexts/RoomContext';
+import RoomContext, {TimelineRenderingType} from '../../contexts/RoomContext';
 import ContentMessages from '../../ContentMessages';
 import UploadBar from './UploadBar';
-import { _t } from '../../languageHandler';
+import {_t} from '../../languageHandler';
 import ThreadListContextMenu from '../views/context_menus/ThreadListContextMenu';
 import RightPanelStore from '../../stores/right-panel/RightPanelStore';
 import SettingsStore from "../../settings/SettingsStore";
-import { ViewRoomPayload } from "../../dispatcher/payloads/ViewRoomPayload";
+import {ViewRoomPayload} from "../../dispatcher/payloads/ViewRoomPayload";
 import FileDropTarget from "./FileDropTarget";
-import { getKeyBindingsManager } from "../../KeyBindingsManager";
-import { KeyBindingAction } from "../../accessibility/KeyboardShortcuts";
+import {getKeyBindingsManager} from "../../KeyBindingsManager";
+import {KeyBindingAction} from "../../accessibility/KeyboardShortcuts";
 import Measured from '../views/elements/Measured';
 import PosthogTrackers from "../../PosthogTrackers";
-import { ButtonEvent } from "../views/elements/AccessibleButton";
-import { RoomViewStore } from '../../stores/RoomViewStore';
+import {ButtonEvent} from "../views/elements/AccessibleButton";
+import {RoomViewStore} from '../../stores/RoomViewStore';
 import Spinner from "../views/elements/Spinner";
-import { ComposerInsertPayload, ComposerType } from "../../dispatcher/payloads/ComposerInsertPayload";
+import {ComposerInsertPayload, ComposerType} from "../../dispatcher/payloads/ComposerInsertPayload";
 
 interface IProps {
     room: Room;
@@ -103,6 +103,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
 
         const room = MatrixClientPeg.get().getRoom(this.props.mxEvent.getRoomId());
         room.on(ThreadEvent.New, this.onNewThread);
+        room.on(ThreadEvent.Update, this.onUpdateThread);
     }
 
     public componentWillUnmount(): void {
@@ -185,6 +186,13 @@ export default class ThreadView extends React.Component<IProps, IState> {
     private onNewThread = (thread: Thread) => {
         if (thread.id === this.props.mxEvent.getId()) {
             this.setupThread(this.props.mxEvent);
+        }
+    };
+
+    private onUpdateThread = (thread: Thread) => {
+        console.log("UPDATING THREAD: " + thread);
+        if (thread.id === this.props.mxEvent.getId()) {
+            this.forceUpdate();
         }
     };
 
@@ -297,9 +305,10 @@ export default class ThreadView extends React.Component<IProps, IState> {
         };
     }
 
-    private renderThreadViewHeader = (): JSX.Element => {
+    private renderThreadViewHeader = (unreadCount: number): JSX.Element => {
         return <div className="mx_ThreadPanel__header">
             <span>{ _t("Thread") }</span>
+            <span>({ unreadCount } unread)</span>
             <ThreadListContextMenu
                 mxEvent={this.props.mxEvent}
                 permalinkCreator={this.props.permalinkCreator} />
@@ -318,6 +327,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
         });
 
         let timeline: JSX.Element;
+        let unreadCount = 0;
         if (this.state.thread) {
             if (this.props.initialEvent && this.props.initialEvent.getRoomId() !== this.state.thread.roomId) {
                 logger.warn("ThreadView attempting to render TimelinePanel with mismatched initialEvent",
@@ -355,6 +365,8 @@ export default class ThreadView extends React.Component<IProps, IState> {
                     onPaginationRequest={this.onPaginationRequest}
                 />
             </>;
+
+            unreadCount = this.state.thread.getUnreadNotificationCount(NotificationCountType.Total);
         } else {
             timeline = <div className="mx_RoomView_messagePanelSpinner">
                 <Spinner />
@@ -373,7 +385,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
                     className="mx_ThreadView mx_ThreadPanel"
                     onClose={this.props.onClose}
                     withoutScrollContainer={true}
-                    header={this.renderThreadViewHeader()}
+                    header={this.renderThreadViewHeader(unreadCount)}
                     ref={this.card}
                     onKeyDown={this.onKeyDown}
                     onBack={(ev: ButtonEvent) => {
