@@ -16,7 +16,7 @@ limitations under the License.
 
 import React, { createRef, KeyboardEvent } from 'react';
 import { Thread, THREAD_RELATION_TYPE, ThreadEvent } from 'matrix-js-sdk/src/models/thread';
-import { Room } from 'matrix-js-sdk/src/models/room';
+import { NotificationCountType, Room } from 'matrix-js-sdk/src/models/room';
 import { IEventRelation, MatrixEvent } from 'matrix-js-sdk/src/models/event';
 import { TimelineWindow } from 'matrix-js-sdk/src/timeline-window';
 import { Direction } from 'matrix-js-sdk/src/models/event-timeline';
@@ -103,6 +103,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
 
         const room = MatrixClientPeg.get().getRoom(this.props.mxEvent.getRoomId());
         room.on(ThreadEvent.New, this.onNewThread);
+        room.on(ThreadEvent.Update, this.onUpdateThread);
     }
 
     public componentWillUnmount(): void {
@@ -185,6 +186,12 @@ export default class ThreadView extends React.Component<IProps, IState> {
     private onNewThread = (thread: Thread) => {
         if (thread.id === this.props.mxEvent.getId()) {
             this.setupThread(this.props.mxEvent);
+        }
+    };
+
+    private onUpdateThread = (thread: Thread) => {
+        if (thread.id === this.props.mxEvent.getId()) {
+            this.forceUpdate();
         }
     };
 
@@ -297,9 +304,10 @@ export default class ThreadView extends React.Component<IProps, IState> {
         };
     }
 
-    private renderThreadViewHeader = (): JSX.Element => {
+    private renderThreadViewHeader = (unreadCount: number): JSX.Element => {
         return <div className="mx_ThreadPanel__header">
             <span>{ _t("Thread") }</span>
+            <span>({ unreadCount } unread)</span>
             <ThreadListContextMenu
                 mxEvent={this.props.mxEvent}
                 permalinkCreator={this.props.permalinkCreator} />
@@ -318,6 +326,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
         });
 
         let timeline: JSX.Element;
+        let unreadCount = 0;
         if (this.state.thread) {
             if (this.props.initialEvent && this.props.initialEvent.getRoomId() !== this.state.thread.roomId) {
                 logger.warn("ThreadView attempting to render TimelinePanel with mismatched initialEvent",
@@ -355,6 +364,8 @@ export default class ThreadView extends React.Component<IProps, IState> {
                     onPaginationRequest={this.onPaginationRequest}
                 />
             </>;
+
+            unreadCount = this.state.thread.getUnreadNotificationCount(NotificationCountType.Total);
         } else {
             timeline = <div className="mx_RoomView_messagePanelSpinner">
                 <Spinner />
@@ -373,7 +384,7 @@ export default class ThreadView extends React.Component<IProps, IState> {
                     className="mx_ThreadView mx_ThreadPanel"
                     onClose={this.props.onClose}
                     withoutScrollContainer={true}
-                    header={this.renderThreadViewHeader()}
+                    header={this.renderThreadViewHeader(unreadCount)}
                     ref={this.card}
                     onKeyDown={this.onKeyDown}
                     onBack={(ev: ButtonEvent) => {
