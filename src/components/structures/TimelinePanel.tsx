@@ -928,50 +928,26 @@ class TimelinePanel extends React.Component<IProps, IState> {
             // Only send a RR if the last RR set != the one we would send
             this.lastRRSentEventId != lastReadEvent.getId();
 
-        // Only send a RM if the last RM sent != the one we would send
-        const shouldSendRM =
-            this.lastRMSentEventId != this.state.readMarkerEventId;
-
         // we also remember the last read receipt we sent to avoid spamming the
         // same one at the server repeatedly
-        if (shouldSendRR || shouldSendRM) {
-            if (shouldSendRR) {
-                this.lastRRSentEventId = lastReadEvent.getId();
-            } else {
-                lastReadEvent = null;
-            }
-            this.lastRMSentEventId = this.state.readMarkerEventId;
+        if (shouldSendRR) {
+            this.lastRRSentEventId = lastReadEvent.getId();
 
             const roomId = this.props.timelineSet.room.roomId;
             const hiddenRR = SettingsStore.getValue("feature_hidden_read_receipts", roomId);
 
             debuglog('Sending Read Markers for ',
                 this.props.timelineSet.room.roomId,
-                'rm', this.state.readMarkerEventId,
                 lastReadEvent ? 'rr ' + lastReadEvent.getId() : '',
                 ' hidden:' + hiddenRR,
             );
-            MatrixClientPeg.get().setRoomReadMarkers(
-                roomId,
-                this.state.readMarkerEventId,
-                hiddenRR ? null : lastReadEvent, // Could be null, in which case no RR is sent
-                lastReadEvent, // Could be null, in which case no private RR is sent
+
+            MatrixClientPeg.get().sendReadReceipt(
+                lastReadEvent,
+                hiddenRR ? ReceiptType.ReadPrivate : ReceiptType.Read,
             ).catch((e) => {
-                // /read_markers API is not implemented on this HS, fallback to just RR
-                if (e.errcode === 'M_UNRECOGNIZED' && lastReadEvent) {
-                    return MatrixClientPeg.get().sendReadReceipt(
-                        lastReadEvent,
-                        hiddenRR ? ReceiptType.ReadPrivate : ReceiptType.Read,
-                    ).catch((e) => {
-                        logger.error(e);
-                        this.lastRRSentEventId = undefined;
-                    });
-                } else {
-                    logger.error(e);
-                }
-                // it failed, so allow retries next time the user is active
+                logger.error(e);
                 this.lastRRSentEventId = undefined;
-                this.lastRMSentEventId = undefined;
             });
 
             // do a quick-reset of our unreadNotificationCount to avoid having
@@ -979,7 +955,7 @@ class TimelinePanel extends React.Component<IProps, IState> {
             // we only do this if we're right at the end, because we're just assuming
             // that sending an RR for the latest message will set our notif counter
             // to zero: it may not do this if we send an RR for somewhere before the end.
-            if (this.isAtEndOfLiveTimeline()) {
+            if (this.isAtEndOfLiveTimeline() && !lastReadEvent.threadRootId) {
                 this.props.timelineSet.room.setUnreadNotificationCount(NotificationCountType.Total, 0);
                 this.props.timelineSet.room.setUnreadNotificationCount(NotificationCountType.Highlight, 0);
                 dis.dispatch({
